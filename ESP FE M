@@ -1,0 +1,312 @@
+--[[
+    CHATCH MOBILE SUPREME V15: VISIONARY ESP
+    - FEATURES: Radar Mini-Map, Warning Indicator, Silhouette Chams (Outline)
+    - PERFORMANCE: Optimized for Mobile, Modular Design
+]]
+
+if _G.Chatch_V15_Running then _G.Chatch_V15_Running = false task.wait(0.5) end
+_G.Chatch_V15_Running = true
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+
+--// CONFIGURATION
+local ESPSettings = {
+    Enabled = true,
+    MaxDistance = 800,       -- ระยะสูงสุดที่ ESP จะทำงาน
+    UpdateRate = 0.05,       -- ความถี่ในการอัปเดต (ยิ่งน้อยยิ่งลื่น แต่กินสเปค)
+
+    -- Radar Settings
+    RadarEnabled = true,
+    RadarPosition = UDim2.new(0, 50, 0, 50), -- ตำแหน่งเรดาร์ (x,y จากมุมซ้ายบน)
+    RadarSize = UDim2.new(0, 150, 0, 150),   -- ขนาดเรดาร์
+    RadarDotSize = 6,                        -- ขนาดจุดผู้เล่นบนเรดาร์
+    RadarRange = 100,                        -- ระยะที่เรดาร์มองเห็น (เมตร)
+
+    -- Warning Indicator Settings
+    WarningEnabled = true,
+    WarningRadius = 0.5,                     -- ตำแหน่งลูกศร (จากกึ่งกลางจอ)
+    WarningSize = 50,                        -- ขนาดลูกศรเตือน
+    WarningMinDistance = 50,                 -- เริ่มเตือนเมื่อศัตรูเข้าใกล้ในระยะนี้
+    WarningAngleThreshold = 45,              -- เริ่มเตือนเมื่อศัตรูอยู่ด้านหลัง +/- องศา
+
+    -- Silhouette Chams Settings
+    ChamsEnabled = true,
+    ChamsColorEnemy = Color3.fromRGB(255, 50, 50), -- สีศัตรู (แดง)
+    ChamsColorTeam = Color3.fromRGB(50, 200, 255),  -- สีเพื่อนร่วมทีม (น้ำเงิน)
+    ChamsTransparency = 0.7,                 -- ความโปร่งใสของ Silhouette
+}
+
+--// --- UI SETUP (Main Toggle Button) ---
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ChatchV15_ESP_Main"
+ScreenGui.Parent = (game:GetService("CoreGui") or LocalPlayer:WaitForChild("PlayerGui"))
+ScreenGui.ResetOnSpawn = false
+
+local ToggleButton = Instance.new("TextButton", ScreenGui)
+ToggleButton.BackgroundColor3 = ESPSettings.Enabled and Color3.fromRGB(50, 200, 255) or Color3.fromRGB(255, 50, 50)
+ToggleButton.Position = UDim2.new(0.1, 0, 0.2, 0)
+ToggleButton.Size = UDim2.new(0, 70, 0, 70)
+ToggleButton.Text = ESPSettings.Enabled and "ESP: ON" or "ESP: OFF"
+ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.Draggable = true 
+ToggleButton.Active = true
+Instance.new("UICorner", ToggleButton).CornerRadius = UDim.new(1, 0)
+
+ToggleButton.MouseButton1Click:Connect(function()
+    ESPSettings.Enabled = not ESPSettings.Enabled
+    ToggleButton.BackgroundColor3 = ESPSettings.Enabled and Color3.fromRGB(50, 200, 255) or Color3.fromRGB(255, 50, 50)
+    ToggleButton.Text = ESPSettings.Enabled and "ESP: ON" or "ESP: OFF"
+    -- ซ่อน/แสดง UI อื่นๆ เมื่อปิด ESP หลัก
+    if RadarFrame then RadarFrame.Visible = ESPSettings.Enabled and ESPSettings.RadarEnabled end
+    for _, dot in pairs(RadarDots) do dot.Visible = ESPSettings.Enabled and ESPSettings.RadarEnabled end
+    for _, arrow in pairs(WarningArrows) do arrow.Visible = ESPSettings.Enabled and ESPSettings.WarningEnabled end
+    for _, chams in pairs(ChamsParts) do 
+        if chams.OriginalTransparency then 
+            chams.Transparency = ESPSettings.Enabled and ESPSettings.ChamsTransparency or chams.OriginalTransparency 
+        end
+    end
+end)
+
+--// --- RADAR MINI-MAP SETUP ---
+local RadarFrame
+local RadarDots = {} -- เก็บ UI Dots ของผู้เล่นบนเรดาร์
+
+if ESPSettings.RadarEnabled then
+    RadarFrame = Instance.new("Frame", ScreenGui)
+    RadarFrame.Name = "ChatchRadar"
+    RadarFrame.Size = ESPSettings.RadarSize
+    RadarFrame.Position = ESPSettings.RadarPosition
+    RadarFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    RadarFrame.BackgroundTransparency = 0.2
+    RadarFrame.BorderSizePixel = 0
+    Instance.new("UICorner", RadarFrame).CornerRadius = UDim.new(1, 0)
+
+    local RadarCenter = Instance.new("ImageLabel", RadarFrame)
+    RadarCenter.BackgroundTransparency = 1
+    RadarCenter.Size = UDim2.new(0, 10, 0, 10)
+    RadarCenter.Position = UDim2.new(0.5, -5, 0.5, -5)
+    RadarCenter.ImageColor3 = Color3.fromRGB(0, 255, 0) -- ตัวเราสีเขียว
+    RadarCenter.Image = "rbxassetid://6022216669" -- Circle Image
+    RadarCenter.ZIndex = 2
+end
+
+--// --- WARNING INDICATOR SETUP ---
+local WarningArrows = {} -- เก็บ UI Arrow ของผู้เล่นที่เตือน
+local PlayerArrowsContainer
+
+if ESPSettings.WarningEnabled then
+    PlayerArrowsContainer = Instance.new("Frame", ScreenGui)
+    PlayerArrowsContainer.Name = "WarningArrowsContainer"
+    PlayerArrowsContainer.Size = UDim2.new(1, 0, 1, 0)
+    PlayerArrowsContainer.BackgroundTransparency = 1
+end
+
+--// --- SILHOUETTE CHAMS SETUP ---
+local ChamsParts = {} -- เก็บ Part ที่ใช้ทำ Silhouette
+
+local function applyChams(char, color)
+    if not ESPSettings.ChamsEnabled or not ESPSettings.Enabled then return end
+    
+    for _, part in pairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and part.Transparency < 0.9 then
+            if not part:GetAttribute("OriginalTransparency") then
+                part:SetAttribute("OriginalTransparency", part.Transparency)
+            end
+            part.Transparency = ESPSettings.ChamsTransparency
+            part.Color = color
+            part.Material = Enum.Material.Neon -- ทำให้เรืองแสง
+            ChamsParts[part] = {OriginalTransparency = part:GetAttribute("OriginalTransparency"), OriginalColor = part:GetAttribute("OriginalColor") or part.Color, OriginalMaterial = part:GetAttribute("OriginalMaterial") or part.Material}
+        end
+    end
+end
+
+local function removeChams(char)
+    for _, part in pairs(char:GetDescendants()) do
+        if part:IsA("BasePart") and ChamsParts[part] then
+            part.Transparency = ChamsParts[part].OriginalTransparency
+            part.Color = ChamsParts[part].OriginalColor
+            part.Material = ChamsParts[part].OriginalMaterial
+            ChamsParts[part] = nil
+        end
+    end
+end
+
+--// TEAM LOGIC (Same as previous, for consistency)
+local function getTeamColor(plr)
+    if plr.Team then
+        local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name
+        local targetTeam = plr.Team.Name
+        
+        if myTeam == "Shadow Wizards" then return ESPSettings.ChamsColorEnemy end -- ถ้าเราอยู่ Shadow Wizards มองทุกคนเป็นศัตรู
+        if myTeam == targetTeam then return ESPSettings.ChamsColorTeam end -- เพื่อนร่วมทีม
+        
+        return ESPSettings.ChamsColorEnemy -- ศัตรู
+    end
+    return ESPSettings.ChamsColorEnemy -- ไม่มีทีมก็เป็นศัตรู
+end
+
+--// ESP CORE LOGIC
+local function HandlePlayerESP(targetPlr)
+    if targetPlr == LocalPlayer then return end
+
+    local radarDot = nil
+    local warningArrow = nil
+    local lastSeenPosition = Vector3.new() -- สำหรับ warning arrow
+
+    if ESPSettings.RadarEnabled and RadarFrame then
+        radarDot = Instance.new("ImageLabel", RadarFrame)
+        radarDot.BackgroundTransparency = 1
+        radarDot.Size = UDim2.new(0, ESPSettings.RadarDotSize, 0, ESPSettings.RadarDotSize)
+        radarDot.ImageColor3 = Color3.fromRGB(255, 255, 255)
+        radarDot.Image = "rbxassetid://6022216669" -- Circle Image
+        radarDot.ZIndex = 2
+        radarDot.Visible = ESPSettings.Enabled
+        RadarDots[targetPlr] = radarDot
+    end
+
+    if ESPSettings.WarningEnabled and PlayerArrowsContainer then
+        warningArrow = Instance.new("ImageLabel", PlayerArrowsContainer)
+        warningArrow.BackgroundTransparency = 1
+        warningArrow.Size = UDim2.new(0, ESPSettings.WarningSize, 0, ESPSettings.WarningSize)
+        warningArrow.Image = "rbxassetid://6022216671" -- Arrow Image
+        warningArrow.ZIndex = 3
+        warningArrow.Visible = ESPSettings.Enabled
+        WarningArrows[targetPlr] = warningArrow
+    end
+
+    local function updatePlayerVisuals(char)
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum then return end
+
+        local chamsColor = getTeamColor(targetPlr)
+        
+        -- Chams: Apply only when in range and not dead
+        if ESPSettings.ChamsEnabled then
+            if hum.Health > 0 then
+                applyChams(char, chamsColor)
+            else
+                removeChams(char)
+            end
+        end
+
+        task.spawn(function()
+            while _G.Chatch_V15_Running and char.Parent and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and hum.Health > 0 do
+                if not ESPSettings.Enabled then
+                    if radarDot then radarDot.Visible = false end
+                    if warningArrow then warningArrow.Visible = false end
+                    removeChams(char)
+                    task.wait(ESPSettings.UpdateRate)
+                    continue
+                end
+
+                local myRoot = LocalPlayer.Character.HumanoidRootPart
+                local dist = (root.Position - myRoot.Position).Magnitude
+                
+                -- Global Visibility Check
+                local isVisible = (dist < ESPSettings.MaxDistance) and (hum.Health > 0)
+
+                -- RADAR UPDATE
+                if ESPSettings.RadarEnabled and radarDot then
+                    if isVisible and dist <= ESPSettings.RadarRange then
+                        local relativePos = root.Position - myRoot.Position
+                        local angle = math.atan2(relativePos.X, -relativePos.Z) -- Z is usually forward
+                        
+                        -- Rotate based on player's camera direction
+                        local camYaw = math.atan2(Camera.CFrame.LookVector.X, -Camera.CFrame.LookVector.Z)
+                        local rotatedAngle = angle - camYaw
+
+                        local x = math.sin(rotatedAngle) * (dist / ESPSettings.RadarRange) * (RadarFrame.AbsoluteSize.X / 2 - ESPSettings.RadarDotSize / 2)
+                        local y = math.cos(rotatedAngle) * (dist / ESPSettings.RadarRange) * (RadarFrame.AbsoluteSize.Y / 2 - ESPSettings.RadarDotSize / 2)
+
+                        radarDot.Position = UDim2.new(0.5, x - ESPSettings.RadarDotSize / 2, 0.5, y - ESPSettings.RadarDotSize / 2)
+                        radarDot.ImageColor3 = chamsColor
+                        radarDot.Visible = true
+                    else
+                        radarDot.Visible = false
+                    end
+                end
+
+                -- WARNING INDICATOR UPDATE
+                if ESPSettings.WarningEnabled and warningArrow then
+                    if isVisible and dist <= ESPSettings.WarningMinDistance then
+                        local screenPos, onScreen = Camera:WorldToScreenPoint(root.Position)
+                        local viewportSize = Camera.ViewportSize
+                        
+                        local camLookVector = Camera.CFrame.LookVector
+                        local dirToTarget = (root.Position - Camera.CFrame.Position).Unit
+                        local dotProduct = camLookVector:Dot(dirToTarget)
+
+                        -- Check if target is behind us or slightly off-screen
+                        if dotProduct < math.cos(math.rad(ESPSettings.WarningAngleThreshold)) or not onScreen then
+                            local xOffset = screenPos.X - (viewportSize.X / 2)
+                            local yOffset = screenPos.Y - (viewportSize.Y / 2)
+                            local angle = math.atan2(yOffset, xOffset)
+
+                            -- Rotate arrow to point towards target
+                            warningArrow.Rotation = math.deg(angle)
+                            
+                            -- Position arrow around the center of the screen
+                            local radius = (viewportSize.X < viewportSize.Y) and viewportSize.X * ESPSettings.WarningRadius or viewportSize.Y * ESPSettings.WarningRadius
+                            warningArrow.Position = UDim2.new(
+                                0.5, radius * math.cos(angle) - ESPSettings.WarningSize / 2,
+                                0.5, radius * math.sin(angle) - ESPSettings.WarningSize / 2
+                            )
+                            warningArrow.ImageColor3 = chamsColor -- สีตามทีม
+                            warningArrow.Visible = true
+                        else
+                            warningArrow.Visible = false
+                        end
+                    else
+                        warningArrow.Visible = false
+                    end
+                end
+                
+                -- Update Chams if needed (e.g. if health changes significantly for color coding)
+                -- Current Chams already handles health (dead = no chams)
+
+                task.wait(ESPSettings.UpdateRate)
+            end
+            -- Cleanup when player leaves or dies
+            if radarDot then radarDot:Destroy() end
+            if warningArrow then warningArrow:Destroy() end
+            removeChams(char) -- Ensure chams are removed from dead/disconnected players
+        end)
+    end
+
+    targetPlr.CharacterAdded:Connect(updatePlayerVisuals)
+    if targetPlr.Character then updatePlayerVisuals(targetPlr.Character) end
+    targetPlr.CharacterRemoving:Connect(function(char) removeChams(char) end)
+end
+
+--// INITIALIZE ALL ESP SYSTEMS
+for _, p in pairs(Players:GetPlayers()) do HandlePlayerESP(p) end
+Players.PlayerAdded:Connect(HandlePlayerESP)
+
+-- Cleanup function for when script stops
+local function cleanupAllESP()
+    for _, dot in pairs(RadarDots) do dot:Destroy() end
+    for _, arrow in pairs(WarningArrows) do arrow:Destroy() end
+    for part, data in pairs(ChamsParts) do
+        if part and part.Parent then
+            part.Transparency = data.OriginalTransparency
+            part.Color = data.OriginalColor
+            part.Material = data.OriginalMaterial
+        end
+    end
+    if RadarFrame then RadarFrame:Destroy() end
+    if PlayerArrowsContainer then PlayerArrowsContainer:Destroy() end
+    if ScreenGui then ScreenGui:Destroy() end
+    _G.Chatch_V15_Running = false
+end
+
+LocalPlayer.CharacterRemoving:Connect(function(char) removeChams(char) end) -- Cleanup chams on local player death
+game:GetService("RunService").Heartbeat:Connect(function()
+    if not _G.Chatch_V15_Running then cleanupAllESP() end
+end)
+
+print("Chatch V15 (Visionary ESP) Loaded! พร้อมสำหรับความได้เปรียบที่เหนือกว่าครับคุณชัช!")
